@@ -2,7 +2,6 @@ const User = require("../model/user");
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
 
-
 async function createUser(req, res) {
     try {
         const { name, email, password, confirmPassword } = req.body;
@@ -78,6 +77,7 @@ async function Login(req, res) {
             });
         }
 
+        // Find user
         const user = await User.findOne({ email });
 
         if (!user) {
@@ -87,6 +87,7 @@ async function Login(req, res) {
             });
         }
 
+        // Check password
         const isPasswordCorrect = await bcrypt.compare(
             password,
             user.password
@@ -99,11 +100,23 @@ async function Login(req, res) {
             });
         }
 
-        const token = jwt.sign(
+        // Generate Access Token
+        const accessToken = jwt.sign(
             {
                 userId: user._id
             },
-            process.env.JWT_SECRET,
+            process.env.ACCESS_TOKEN_SECRET,
+            {
+                expiresIn: "15m"
+            }
+        );
+
+        // Generate Refresh Token
+        const refreshToken = jwt.sign(
+            {
+                userId: user._id
+            },
+            process.env.REFRESH_TOKEN_SECRET,
             {
                 expiresIn: "7d"
             }
@@ -112,15 +125,19 @@ async function Login(req, res) {
         return res.status(200).json({
             success: true,
             message: "Login successful",
-            token,
+            accessToken,
+            refreshToken,
             user: {
                 id: user._id,
                 name: user.name,
-                email: user.email
+                email: user.email,
+                role: user.role
             }
         });
 
     } catch (err) {
+        console.error("Login Error:", err);
+
         return res.status(500).json({
             success: false,
             message: "Internal server error"
@@ -157,8 +174,62 @@ async function deleteUser(req, res) {
     }
 }
 
+//Refresh Token
+
+async function refreshAccessToken(req, res) {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(401).json({
+                success: false,
+                message: "Refresh token is required"
+            });
+        }
+
+        const decoded = jwt.verify(
+            refreshToken,
+            process.env.REFRESH_TOKEN_SECRET
+        );
+
+        const user = await User.findById(decoded.userId);
+
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        const accessToken = jwt.sign(
+            {
+                userId: user._id
+            },
+            process.env.ACCESS_TOKEN_SECRET,
+            {
+                expiresIn: "15m"
+            }
+        );
+
+        return res.status(200).json({
+            success: true,
+            message: "Access token refreshed successfully",
+            accessToken
+        });
+
+    } catch (err) {
+        console.error("Refresh Token Error:", err);
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid or expired refresh token"
+        });
+    }
+}
+
 module.exports = {
     createUser,
     Login,
-    deleteUser   
+    deleteUser,
+    refreshAccessToken
 }
