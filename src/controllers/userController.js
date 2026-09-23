@@ -1,6 +1,7 @@
 const User = require("../model/user");
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
+const Session = require("../model/session");
 
 async function createUser(req, res) {
     try {
@@ -122,6 +123,14 @@ async function Login(req, res) {
             }
         );
 
+        const refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+
+        await Session.create({
+           userId: user._id,
+           refreshTokenHash,
+           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        });
+
         return res.status(200).json({
             success: true,
             message: "Login successful",
@@ -192,18 +201,32 @@ async function refreshAccessToken(req, res) {
             process.env.REFRESH_TOKEN_SECRET
         );
 
-        const user = await User.findById(decoded.userId);
+        const session = await Session.findOne({
+            userId: decoded.userId
+        });
 
-        if (!user) {
+        if (!session) {
             return res.status(401).json({
                 success: false,
-                message: "User not found"
+                message: "Session not found"
+            });
+        }
+
+        const isTokenValid = await bcrypt.compare(
+            refreshToken,
+            session.refreshTokenHash
+        );
+
+        if (!isTokenValid) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token"
             });
         }
 
         const accessToken = jwt.sign(
             {
-                userId: user._id
+                userId: decoded.userId
             },
             process.env.ACCESS_TOKEN_SECRET,
             {
@@ -227,9 +250,71 @@ async function refreshAccessToken(req, res) {
     }
 }
 
+//Logout 
+
+async function logout(req, res) {
+    try {
+        const { refreshToken } = req.body;
+
+        if (!refreshToken) {
+            return res.status(400).json({
+                success: false,
+                message: "Refresh token is required"
+            });
+        }
+
+        const decoded = jwt.verify(
+            refreshToken,
+            process.env.REFRESH_TOKEN_SECRET
+        );
+
+        const session = await Session.findOne({
+            userId: decoded.userId
+        });
+
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                message: "Session not found"
+            });
+        }
+
+        const isTokenValid = await bcrypt.compare(
+            refreshToken,
+            session.refreshTokenHash
+        );
+
+        if (!isTokenValid) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid refresh token"
+            });
+        }
+
+        await Session.deleteOne({
+            _id: session._id
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Logout successful"
+        });
+
+    } catch (err) {
+        console.error("Logout Error:", err);
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid or expired refresh token"
+        });
+    }
+}
+
+
 module.exports = {
     createUser,
     Login,
     deleteUser,
-    refreshAccessToken
+    refreshAccessToken,
+    logout
 }
