@@ -1,7 +1,12 @@
 const User = require("../model/user");
 const bcrypt = require('bcrypt');
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
+
+
 const Session = require("../model/session");
+const EmailVerificationToken = require("../model/emailVerificationToken");
+const transporter = require("../config/mail");
 
 async function createUser(req, res) {
     try {
@@ -44,7 +49,35 @@ async function createUser(req, res) {
         });
 
         await user.save();
+        const verificationToken = crypto.randomBytes(32).toString("hex");
 
+        const tokenHash = await bcrypt.hash(verificationToken, 10);
+
+        await EmailVerificationToken.create({
+            userId: user._id,
+            tokenHash,
+            expiresAt: new Date(Date.now() + 15 * 60 * 1000)
+        });
+
+        const verificationLink =
+       `http://localhost:5000/auth/verify-email?token=${verificationToken}`;
+
+       await transporter.sendMail({
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Verify your email",
+        html: `
+          <h2>Welcome ${user.name}!</h2>
+          <p>Please verify your email address by clicking the button below:</p>
+           <a href="${verificationLink}">
+             Verify Email
+           </a>
+           <p>This link will expire in 15 minutes.</p>
+        `
+      });
+
+
+        console.log("Verification Token:", verificationToken);
         return res.status(201).json({
             success: true,
             message: "User created successfully",
@@ -310,11 +343,96 @@ async function logout(req, res) {
     }
 }
 
+//Verify_Email
+
+// Verify Email
+
+async function verifyEmail(req, res) {
+    try {
+        const { token } = req.query;
+
+        if (!token) {
+            return res.status(400).json({
+                success: false,
+                message: "Verification token is required"
+            });
+        }
+
+        // Find all unexpired verification tokens
+        const verificationTokens = await EmailVerificationToken.find({
+            expiresAt: { $gt: new Date() }
+        });
+
+        let validToken = null;
+
+        // Compare plain token with hashed tokens
+        for (const verificationToken of verificationTokens) {
+            const isMatch = await bcrypt.compare(
+                token,
+                verificationToken.tokenHash
+            );
+
+            if (isMatch) {
+                validToken = verificationToken;
+                break;
+            }
+        }
+
+        if (!validToken) {
+            return res.status(400).json({
+                success: false,
+                message: "Invalid or expired verification token"
+            });
+        }
+
+        // Find user
+        const user = await User.findById(validToken.userId);
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found"
+            });
+        }
+
+        // Already verified
+        if (user.emailVerified) {
+            return res.status(200).json({
+                success: true,
+                message: "Email is already verified"
+            });
+        }
+
+        // Mark email as verified
+        user.emailVerified = true;
+
+        await user.save();
+
+        // Delete verification token so it cannot be reused
+        await EmailVerificationToken.deleteOne({
+            _id: validToken._id
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: "Email verified successfully"
+        });
+
+    } catch (err) {
+        console.error("Email Verification Error:", err);
+
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error"
+        });
+    }
+}
 
 module.exports = {
     createUser,
     Login,
     deleteUser,
     refreshAccessToken,
-    logout
+    logout,
+    verifyEmail
 }

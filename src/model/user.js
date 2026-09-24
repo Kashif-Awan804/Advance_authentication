@@ -17,6 +17,11 @@ const userSchema = new mongoose.Schema({
             message: "Please provide a valid email",
         }
     },
+    
+    emailVerified: {
+       type: Boolean,
+       default: false
+    },
 
     password: {
         type: String,
@@ -31,7 +36,8 @@ const userSchema = new mongoose.Schema({
         type: String,
         enum: ["user", "admin"],
         default: "user"
-    }
+    },
+
 });
 
 const User = mongoose.model("User", userSchema);
